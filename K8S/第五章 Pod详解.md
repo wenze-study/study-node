@@ -140,3 +140,345 @@ kubectl explain pod.metadata
 
 ## 二、Pod 配置
 
+本小节主要研究`pod.spec.containers`属性，这也是 pod 配置中最为关键的一项配置。
+
+```shell
+kubectl explain pod.spec.containers
+
+KIND:       Pod
+VERSION:    v1
+
+RESOURCE: containers <[]Container> # 数组，代表可以有多个容器
+
+FIELDS:
+  name	<string> -required- # 容器名称
+  image	<string> # 容器需要的镜像地址
+  imagePullPolicy	<string> # 镜像拉取策略
+  command	<[]string> # 容器的启动命令列表，如不指定，使用打包时使用的启动命令
+  args	<[]string> # 容器的启动命令需要的参数列表
+  env	<[]EnvVar> # 容器环境变量的配置
+  ports	<[]ContainerPort> # 容器需要暴露的端口号列表
+  resources	<ResourceRequirements> # 资源限制和资源请求的设置
+```
+
+### 1、基本配置
+
+创建 pod-base.yaml，内容如下：
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata: 
+  name: dev
+  
+---
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-base
+  namespace: dev
+  labels:
+    user: wenze
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.24
+    - name: busybox
+      image: busybox:1.30
+```
+
+上面定义了一个比较简单的 Pod 配置，里面有两个容器：
+
+- nginx：用 1.24 版本的 nginx 镜像创建，（nginx 是一个轻量级 web 容器）
+- busybox：用 1.30 版本的 busybox 镜像创建，（busybox 是一个小巧的 linux 命令集合）
+
+```shell
+# 创建 pod
+kubectl create -f pod-base.yaml
+
+# 查看 pod 状况
+# READY 1/2 : 表示当前 Pod 中有两个容器，其中一个准备就绪，一个未就绪
+# RESARTS   : 重启次数，因为有 1 个容器故障了，Pod 一直在重启试图恢复它
+kubectl get pod -n dev
+NAME       READY   STATUS             RESTARTS      AGE
+pod-base   1/2     CrashLoopBackOff   1 (10s ago)   11s
+
+# 可以通过 describe 查看内部的详情
+# 此时已经运行起来了一个基本的 Pod，虽然它暂时有问题
+kubectl describe pod pod-base -n dev
+```
+
+### 2、镜像拉取
+
+创建 pod-imagepullpolicy.yaml 文件，内容如下：
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata: 
+  name: dev
+  
+---
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-imagepullpolicy
+  namespace: dev
+  labels:
+    user: wenze
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.24
+      imagePullPolicy: Always # 用于设置镜像拉取策略
+    - name: busybox
+      image: busybox:1.30
+```
+
+`imagePullPolicy`，用于设置镜像拉取策略，kubernetes 支持配置三种拉取策略：
+
+- `Always`：总是从远程仓库拉取镜像（一直远程下载）
+- `IfNotPresent`：本地有则使用本地镜像，本地没有则从远程仓库拉取镜像（本地有就本地，本地没远程下载）
+- `Never`：只使用本地镜像，从不去远程仓库拉取，本地没有就报错（一直使用本地）
+
+> 默认值说明：
+>
+> ​	如果镜像 tag 为具体版本号，默认策略是：`IfNotPresent`
+>
+> ​	如果镜像 tag 为：latest（最终版本），默认策略是：`Always`
+
+```shell
+# 创建 pod
+kubectl create -f pod-imagepullpolicy.yaml
+
+# 查看 pod 详情
+# 此时明显可以看到 nginx 镜像有一步 Pulling image 'nginx:1.17.2' 的过程
+kubectl describe pod pod-imagepullpolicy -n dev
+```
+
+### 3、启动命令
+
+​	在前面的案例中，一直有一个问题没有解决，就是 busybox 容器一直没有成功运行，那么到底是什么原因导致这个容器的故障呢？
+
+​	原来 busybox 并不是一个程序，而是类似于一个工具类的集合，kubernetes 集群启动管理后，它会自动关闭。解决办法就是让其一直在运行，这就用到了 command 配置。
+
+创建 pod-command.yaml 文件，内容如下：
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata: 
+  name: dev
+  
+---
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-command
+  namespace: dev
+  labels:
+    user: wenze
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.24
+    - name: busybox
+      image: busybox:1.30
+      command: ["/bin/sh", "-c", "touch /tmp/hello.txt;while true; do /bin/echo $(date + %T) >> /tmp/hello.txt; sleep 3; done;"]
+```
+
+command，用于在 pod 中的容器初始化完毕之后运行的一个命令。
+
+> 稍微解释下上面命令的意思：
+>
+> ​	`"/bin/sh", "-c"`，使用 sh 执行命令
+>
+> ​	`touch /tmp/hello.txt; ` 创建一个 `/tmp/hello.txt` 文件
+>
+> ​	`while true;do /bin/echo $(data + %T) >> /tmp/hello.txt;sleep 3; done;`每隔3 秒文件中写入当前时间
+
+```shell
+# 创建 pod
+kubectl create -f pod-command.yaml
+
+# 查看 pod 状态
+# 此时发现两个 pod 都正常运行了
+kuectl get pods pod-command -n dev
+
+# 进入 pod 中的 busybox 容器，查看文件内容
+# 补充一个命令：kubectl exec pod名称 -n 命名空间 -it -c 容器名称 /bin/sh 在容器内部执行命令
+# 使用这个命令就可以进入某个容器的内部，然后进行相关操作了
+# 比如，可以查看 txt 文件的内容
+kubectl exec pod-command -n dev -it -c busybox /bin/sh
+
+tail -f /tmp/hello.txt
+```
+
+```txt
+特别说明：
+  通过上面发现 command 已经可以完成启动命令和传递参数的功能，为什么这里还要提供一个 args 选项，用于传递参数呢？
+  1. 如果 command 和 args 均没有写，那么用 Dockerfile 的配置。
+  2. 如果 command 写了，但 args 没有写，那么 Dockerfile 默认的配置会被忽略，执行输入的 command。
+  3. 如果 command 没写，但 args 写了，那么 Dockerfile 中配置的 ENTRYPOINT 的命令会被执行，使用当前 args 的参数
+  4. 如果 command 和 args 都写了，那么 Dockerfile 的配置被忽略，执行 command 并追加上 args 参数
+```
+
+### 4、环境变量
+
+创建 pod-env,yaml 文件，内容如下：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-env
+  namespace: dev
+  labels:
+    user: wenze
+spec:
+  containers:
+    - name: busybox
+      image: busybox:1.30
+      command: ["/bin/sh", "-c", "touch /tmp/hello.txt;while true; do /bin/echo $(date + %T) >> /tmp/hello.txt; sleep 3; done;"]
+      env: # 设置环境变量列表
+      	- name: "username"
+      	  value: "admin"
+      	- name: "password"
+      	  value: "123456"
+```
+
+env，环境变量，用于在 pod 中的容器设置环境变量。
+
+```shell
+# 创建 pod
+kubectl create -f pod-env.yaml
+
+# 进入容器，输出环境变量
+kubectl exec pod-env -n dev -c busybox -it /bin/sh
+
+echo $username
+admin
+
+echo $password
+123456
+```
+
+这种方式不是很推荐，推荐将这些配置单独存储在配置文件中，这种方式将在后面介绍。
+
+### 5、端口设置
+
+本小节来介绍容器的端口设置，也就是 containers 的 ports 选项。
+
+首先看下 ports 支持的子选项：
+
+```shell
+kubectl explain pod.spec.containers.ports
+
+KIND:       Pod
+VERSION:    v1
+
+FIELD: ports <[]ContainerPort>
+
+FIELDS:
+  name	<string> # 端口名称，如果指定，必须保证 name 在 pod 中是唯一的
+  containerPort	<integer> -required- # 容器要监听的端口(0<x<65536)
+  hostPort	<integer> # 容器要在主机上公开的端口，如果设置，主机上只能运行容器的一个副本（一般省略）
+  hostIP	<string> # 要将外部端口绑定到的主机 IP（一般省略）
+  protocol	<string> # 端口协议。必须是 UDP、TCP 或者 SCTP。默认为：TCP。
+```
+
+接下来，编写一个测试案例，创建 pod-ports.yaml
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-ports
+  namespace: dev
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.24
+      ports: # 设置容器暴露的端口列表
+        - name: nginx-port
+          containerPort: 80
+          protocol: TCP
+```
+
+```shell
+# 创建 pod
+kubectl create -f pod-ports.yaml
+
+# 查看 pod
+# 在下面可以明显看到配置信息
+kubectl get pod pod-ports -n dev -o yaml
+
+kubectl describe pod pod-ports -n dev
+```
+
+访问容器中的程序需要使用的是：`PodIP:containerPort`
+
+### 6、资源配额
+
+​	容器中的程序要运行，肯定是要占用一定资源的，比如 CPU 和内存等，如果不对某个容器的资源做限制，那么它就可能吃掉大量资源，导致其他容器无法运行。针对这种情况，kubernetes 提供了对内存和 CPU 的资源进行配额的机制，这种机制主要通过 resources 选项实现，他有两个子选项：
+
+- limits：用于限制运行时容器的最大占用资源，当容器占用资源超过 limits 时会被终止，并进行重启。
+- requests：用于设置容器需要的最小资源，如果环境资源不够，容器将无法启动。
+
+可以通过上面两个选项设置资源的上下限。
+
+接下来，编写一个测试案例，创建 pod-resources.yaml
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-resources
+  namespace: dev
+spec:
+  containers:
+    - name: nginx:
+      image: nginx:1.24
+      resources: # 资源配额
+        limits: # 限制资源（上限）
+          cpu: "2" # CPU 限制，单位是 core 数
+          memory: "10Gi" # 内存限制
+        requests: # 限制资源（下限）
+          cpu: "1" # CPU 限制，单位是 core 数
+          memory: "10Mi" # 内存限制
+```
+
+在这对 cpu 和 memory 的单位做一个说明：
+
+- cpu：core 数，可以为整数或小数
+- memory：内存大小，可以使用 Gi、Mi、G、M 等形式
+
+```shell
+# 运行 pod
+kubectl create -f pod-resources.yaml
+
+# 查看发现 pod 运行正常
+kubectl get pods pod-resources -n dev
+
+# 接下来，停止 Pod
+kubectl delete -f pod-resources.yaml
+
+# 编辑 pod，修改 resources.requests.memory 的值为 10Gi
+
+# 再次启动 pod
+kubectl create -f pod-resources.yaml
+
+# 查看 pod 状态，发现 pod 启动失败
+kubectl get pod pod-resources -n dev -o wide
+
+# 查看 pod 详情会发现，如下提示
+kuebctl describe pod pod-resources -n dev
+
+Warning  FailedScheduling  17s   default-scheduler  0/1 nodes are available: 1 Insufficient memory. `(内存不足)`
+```
+
+## 三、Pod 生命周期
+
