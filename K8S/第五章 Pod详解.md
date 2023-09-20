@@ -482,3 +482,123 @@ Warning  FailedScheduling  17s   default-scheduler  0/1 nodes are available: 1 I
 
 ## 三、Pod 生命周期
 
+我们一般将 pod 对象从创建至终的这段时间范围称为 pod 的生命周期，他主要包含下面的过程：
+
+- pod 创建过程
+- 运行初始化容器（init container）过程
+- 运行主容器（main container）过程
+    - 容器启动后钩子（post start）、容器终止前钩子（pre stop）
+    - 容器的存活性探测（liveness probe）、就绪性探测（readiness probe）
+- pod 终止过程
+
+![K8S-Pod生命周期](https://study-node-md.oss-cn-beijing.aliyuncs.com/2023%2F09%2F19%2F1695116536-762ba92624f980abe7295348a5f85e0a-20230919174214.png)
+
+在整个生命周期中，Pod 会出现 5 种**状态（相位）**，分别如下：
+
+- 挂起（Pending）：apiserver 已经创建了 pod 资源对象，但它尚未被调度完成或者仍处于下载镜像的过程中
+- 运行中（Running）：pod 已经被调度至某节点，并且所有容器都已经被 kubelet 创建完成
+- 成功（Succeeded）：pod 中的所有容器都已经成功终止并且不会被重启
+- 失败（Failed）：所有容器都已经终止，但至少有一个容器终止失败，即容器返回了非 0 值的退出状态
+- 未知（Unknown）：apiserver 无法正常获取到 pod 对象的状态信息，通常由网络通信失败所导致
+
+### 1、创建和终止
+
+#### pod的创建过程
+
+1. 用户通过 kubectl 或者其他 api 客户端提交需要创建的 pod 信息给 apiServer
+2. apiServer 开始生成 pod 对象的信息，并将信息存入 etcd，然后返回确认信息至客户端
+3. apiServer 开始反映 etcd 中的 pod 对象的变化，其他组件使用 watch 机制来跟踪检查 apiServer 上的变动
+4. scheduler 发现有新的 pod 对象要创建，开始为 pod 分配主机并将结果信息更新至 apiSever
+5. node 节点上的 kubelet 发现有 pod 调度过来，尝试调用 docker 启动容器，并将结果回送至 apiServer
+6. apiServer 将接收到的 pod 状态信息存入 etcd 中
+
+![K8S-Kubernetes组件](https://study-node-md.oss-cn-beijing.aliyuncs.com/2023%2F09%2F08%2F1694165394-161421ed07c7365693fbffdc5949df50-image-20230908172953610.png)
+
+#### pod 的终止过程
+
+1. 用户向 apiServer 发送删除 pod 对象的命令
+2. apiServer 中的 pod 对象信息会随着时间的推移而更新，在宽限期内（默认 30s），pod 被视为 dead
+3. 将 pod 标记为 terminating 状态
+4. kubelet 在监控到 pod 对象转为 terminating 状态的同时启动 pod 关闭过程
+5. 端点控制器监控到 pod 对象的关闭行为时将其从所有匹配到此端点的 service 资源的端点列表中移除
+6. 如果当前 pod 对象定义了 preStop 钩子处理器，则在其标记为 terminating 后即会以同步的方式启动执行
+7. pod 对象中的容器进程收到停止信号
+8. 宽限期结束后，若 pod 中还存在仍在运行的进程，那么 pod 对象会收到立即终止的信号
+9. kubelet 请求 apiServer 将此 pod 资源的宽限期设置为 0 从而完成删除操作，此时 pod 对于用户已不可见
+
+### 2、初始化容器
+
+初始化容器是在 pod 的主容器启动之前要运行的容器，主要是做一些主容器的前置工作，它具有两大特性：
+
+1. 初始化容器必须运行完成直至结束，若某初始化容器运行失败，那么 kubernetes 需要重启它直到成功完成
+2. 初始化容器必须按照定义的顺利执行，当且仅当前一个成功之后，后面的一个才能运行
+
+初始化容器有很多的应用场景，下面列出的是最常见的几个：
+
+- 提供主容器镜像中不具备的工具程序或自定义代码
+- 初始化容器要先于应用容器串行启动并运行完成，因此可用于延后应用容器的启动直至其依赖的条件得到满足
+
+接下来做一个案例，模拟下面这个需求：
+
+​	假设要以主容器来运行 nginx，但是要求在运行 nginx 之前先要能够连接上 mysql 和 redis 所在服务器
+
+​	为了简化测试，事先规定好 mysql`(192.168.109.201)`和 redis`(192.168.109.202)`服务器的地址
+
+创建 pod-initcontainer.yaml，内容如下：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-initcontainer
+  namespace: dev
+spec:
+  containers:
+    - name: main-container
+      image: nginx:1.17.1
+      ports:
+        - name: nginx-port
+          containerPort: 80
+  initContainers:
+    - name: test-mysql
+      image: busybox:1.30
+      command: ["sh", "-c", "until ping 172.18.0.4 -c 1; do echo waiting for mysql ...; sleep 2; done;"]
+    - name: test-redis
+      image: busybox:1.30
+      command: ["sh", "-c", "until ping 172.18.0.6 -c 1; do echo waiting for redis ...; sleep 2; done;"]
+```
+
+```shell
+# 创建 pod
+kubectl create -f pod-initcontainer.yaml
+
+# 查看 pod
+# 发现 pod 卡在启动第一个初始化容器过程中，后面的容器不会运行
+kubectl describe pod pod-initcontainer -n dev
+
+# 动态查看 pod
+kubectl get pods pod-initcontainer -n dev -w
+
+# 接下来新开一个 shell，为当前服务器新增两个 ip，观察 pod 的变化
+ifconfig ens33:1 192.168.109.201 netmask 255.255.255.0 up
+ifconfig ens33:1 192.168.109.202 netmask 255.255.255.0 up
+```
+
+### 3、钩子函数
+
+
+
+### 4、容器探测
+
+
+
+### 5、重启策略
+
+
+
+
+
+
+
+
+
