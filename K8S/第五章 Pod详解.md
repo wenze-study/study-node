@@ -586,11 +586,123 @@ ifconfig ens33:1 192.168.109.202 netmask 255.255.255.0 up
 
 ### 3、钩子函数
 
+钩子函数能够感知自身生命周期中的事件，并在相应的时刻到来时运行用户指定的程序代码。
 
+kubernetes 在主容器的启动之后和停止之前提供了两个钩子函数：
+
+- `post start`： 容器创建之后执行，如果失败了会重启容器
+- `pre stop`：容器终止之前执行，执行完成之后容器将成功终止，在其完成之前会阻塞删除容器的操作
+
+钩子处理器支持使用下面三种方式定义动作：
+
+- Exec 命令：在容器内执行一次命令
+
+    ```yaml
+    ...
+      lifecycle:
+        postStart:
+          exec:
+            command:
+              - cat
+              - /tmp/healthy
+    ...
+    ```
+
+- TCPSocket：在当前容器尝试访问指定的 socket
+
+    ```yaml
+    ...
+      lifecycle:
+        postStart:
+          tcpSocket:
+            port: 8080
+    ...
+    ```
+
+- HTTPGet：在当前容器中向某 url 发起 http 请求
+
+    ```yaml
+    ...
+      lifecycle:
+        postStart:
+          httpGet:
+            path: / # URI地址
+            port: 80 # 端口号
+            host: 192.168.109.100 # 主机地址
+            scheme: HTTP # 支持的协议，http 或者 https
+    ...
+    ```
+
+接下来，以 exec 方式为例，演示下钩子函数的使用，创建 pod-hook-exec.yaml 文件，内容如下：
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-hook-exec
+  namespace: dev
+spec:
+  containers:
+    - name: main-container
+      image: nginx:1.24
+      ports:
+        - name: nginx-port
+          containerPort: 80
+      lifecycle:
+        postStart:
+          exec: # 在容器启动的时候执行一个命令，修改掉 nginx 的默认首页内容
+            command: ["/bin/sh", "-c", "echo postStart... > /usr/share/nginx/html/index.html"]
+        preStop:
+          exec: # 在容器停止之前停止 nginx 服务
+            command: ["/usr/sbin/nginx", "-s", "quit"]
+```
+
+```shell
+# 创建 pod
+kubectl create -f pod-hook-exec.yaml
+
+# 查看 pod
+kubectl get pods pod-hook-exec -n dev -o wide
+NAME            READY   STATUS    RESTARTS   AGE   IP              NODE      
+pod-hook-exec   1/1     Running   0          22s   192.168.194.5   orbstack  
+
+# 访问 nginx 页面
+curl 192.168.194.5:80
+```
 
 ### 4、容器探测
 
+​	容器探测用于检测容器中的应用实例是否正常工作，是保障业务可用性的一种传统机制。如果经过探测，实例的状态不符合预期，那么 kubernetes 就会把该问题实例“摘除”，不承担业务流量。kubernetes 提供了两种探针来实现容器探测，分别是：
 
+- liveness probes：存活性探针，用于检测应用实例当前是否处于正常运行状态，如果不是，k8s 会重启容器
+- readiness probes：就绪性探针，用于检测应用实例当前是否可以接收请求，如果不能，k8s 不会转发流量
+
+> linvenessProbe 决定是否重启容器，readinessProbe 决定是否将请求转发给容器
+
+上面两种探针目前均支持三种探测方式：
+
+- Exec 命令：在容器内执行一次命令，如果命令执行的退出码为 0，则认为程序正常，否则不正常
+
+    ```yaml
+    ---
+      livenessProbe:
+        exec:
+          command: 
+            - /cat
+            - /tmp/healthy
+    ---
+    ```
+
+- TCPSocket：将会尝试访问一个用户容器的端口，如果能够建立这条连接，则认为程序正常，否则不正常
+
+    ```yaml
+    ---
+      livenessProbe:
+      
+    ---
+    ```
+
+- 
 
 ### 5、重启策略
 
