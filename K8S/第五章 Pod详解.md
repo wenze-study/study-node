@@ -121,22 +121,22 @@ kubectl explain pod.metadata
 
 | 属性字段   | 类型     | 说明                                                         |
 | ---------- | -------- | ------------------------------------------------------------ |
-| apiVersion | <string> | 版本，由 kubernetes 内部定义，版本必须可以用`kubectl api-versions`查询到 |
-| kind       | <string> | 类型，由 kubernetes 内部定义，类型必须可以用`kubectl api-resources`查询到 |
-| metadata   | <object> | 元数据，主要是资源标识和说明，常用的有 name、namespace、labels 等 |
-| spec       | <object> | 描述，这是配置中最重要的一部分，里面是对各种资源配置的详细描述 |
-| status     | <object> | 状态信息，里面的内容不需要定义，由 kubernetes 自动生成       |
+| apiVersion | \<string\> | 版本，由 kubernetes 内部定义，版本必须可以用`kubectl api-versions`查询到 |
+| kind       | \<string\> | 类型，由 kubernetes 内部定义，类型必须可以用`kubectl api-resources`查询到 |
+| metadata   | \<object\> | 元数据，主要是资源标识和说明，常用的有 name、namespace、labels 等 |
+| spec       | \<object\> | 描述，这是配置中最重要的一部分，里面是对各种资源配置的详细描述 |
+| status     | \<object\> | 状态信息，里面的内容不需要定义，由 kubernetes 自动生成       |
 
 在上面的属性中，spec 是接下来研究的重点，继续看下它的常见子属性：
 
 | 属性字段      | 类型       | 说明                                                         |
 | ------------- | ---------- | ------------------------------------------------------------ |
-| containers    | <[]Object> | 容器列表，用于定义容器的详细信息                             |
-| nodeName      | <string>   | 根据 nodeName 的值将 Pod 调度到指定的 Node 节点上            |
-| nodeSelector  | <map[]>    | 根据 NodeSelector 中定义的信息选择将该 Pod 调度到包含这些 label 的 Node 上 |
-| hostNetwork   | <boolean>  | 是否使用主机网络模式，默认为 false，如果设置为 true，表示使用宿主机网络 |
-| volumes       | <[]Object> | 存储卷，用于定义 Pod 上面挂载的存储信息                      |
-| restartPolicy | <string>   | 重启策略，表示 Pod 在遇到故障的时候的处理策略                |
+| containers    | \<[]Object\> | 容器列表，用于定义容器的详细信息                             |
+| nodeName      | \<string\>   | 根据 nodeName 的值将 Pod 调度到指定的 Node 节点上            |
+| nodeSelector  | \<map[]\>    | 根据 NodeSelector 中定义的信息选择将该 Pod 调度到包含这些 label 的 Node 上 |
+| hostNetwork   | \<boolean\>  | 是否使用主机网络模式，默认为 false，如果设置为 true，表示使用宿主机网络 |
+| volumes       | \<[]Object\> | 存储卷，用于定义 Pod 上面挂载的存储信息                      |
+| restartPolicy | \<string\>   | 重启策略，表示 Pod 在遇到故障的时候的处理策略                |
 
 ## 二、Pod 配置
 
